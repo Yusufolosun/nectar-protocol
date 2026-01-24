@@ -258,6 +258,126 @@ contract NectarVault is ERC4626, Ownable, ReentrancyGuard, INectarVault {
         emit Harvested(strategy, totalProfit, totalLoss);
     }
 
+    /* ========== ERC4626 OVERRIDES ========== */
+
+    /**
+     * @notice Deposits assets and automatically deploys to strategies
+     * @dev Overrides ERC4626 deposit to trigger fund deployment
+     * @param assets Amount of assets to deposit
+     * @param receiver Address to receive vault shares
+     * @return shares Amount of shares minted
+     */
+    function deposit(uint256 assets, address receiver) 
+        public 
+        virtual 
+        override(ERC4626, IERC4626)
+        nonReentrant 
+        returns (uint256) 
+    {
+        uint256 shares = super.deposit(assets, receiver);
+        _deployFunds();
+        return shares;
+    }
+
+    /**
+     * @notice Withdraws assets, pulling from strategies if necessary
+     * @dev Overrides ERC4626 withdraw to handle strategy withdrawals
+     * @param assets Amount of assets to withdraw
+     * @param receiver Address to receive assets
+     * @param owner Address of shares owner
+     * @return shares Amount of shares burned
+     */
+    function withdraw(uint256 assets, address receiver, address owner)
+        public
+        virtual
+        override(ERC4626, IERC4626)
+        nonReentrant
+        returns (uint256)
+    {
+        // Check if we have enough idle funds
+        uint256 idle = IERC20(asset()).balanceOf(address(this));
+        
+        if (assets > idle) {
+            // Need to withdraw from strategies
+            uint256 needed = assets - idle;
+            _withdrawFromStrategies(needed);
+        }
+        
+        return super.withdraw(assets, receiver, owner);
+    }
+
+    /* ========== INTERNAL FUNCTIONS ========== */
+
+    /**
+     * @notice Deploys idle funds to strategies based on debt ratios
+     * @dev Iterates through strategies and deposits according to target allocations
+     */
+    function _deployFunds() internal {
+        uint256 availableFunds = IERC20(asset()).balanceOf(address(this));
+        if (availableFunds == 0) return;
+        
+        for (uint256 i = 0; i < strategyList.length; i++) {
+            address strategy = strategyList[i];
+            StrategyParams storage params = strategies[strategy];
+            
+            if (!params.active) continue;
+            
+            // Calculate target debt for this strategy
+            uint256 vaultAssets = totalAssets();
+            uint256 targetDebt = (vaultAssets * params.debtRatio) / MAX_BPS;
+            
+            if (targetDebt > params.totalDebt) {
+                uint256 amountToDeposit = targetDebt - params.totalDebt;
+                
+                // Don't deploy more than available
+                if (amountToDeposit > availableFunds) {
+                    amountToDeposit = availableFunds;
+                }
+                
+                if (amountToDeposit > 0) {
+                    IERC20(asset()).safeTransfer(strategy, amountToDeposit);
+                    IBaseStrategy(strategy).deposit(amountToDeposit);
+                    
+                    params.totalDebt += amountToDeposit;
+                    totalStrategyDebt += amountToDeposit;
+                    availableFunds -= amountToDeposit;
+                }
+            }
+            
+            if (availableFunds == 0) break;
+        }
+    }
+
+    /**
+     * @notice Withdraws funds from strategies when vault needs liquidity
+     * @dev Iterates through strategies withdrawing until amount needed is satisfied
+     * @param amountNeeded Amount of assets needed
+     * @return amountWithdrawn Total amount withdrawn from strategies
+     */
+    function _withdrawFromStrategies(uint256 amountNeeded) internal returns (uint256) {
+        uint256 amountWithdrawn = 0;
+        
+        for (uint256 i = 0; i < strategyList.length && amountWithdrawn < amountNeeded; i++) {
+            address strategy = strategyList[i];
+            StrategyParams storage params = strategies[strategy];
+            
+            if (!params.active || params.totalDebt == 0) continue;
+            
+            uint256 amountToWithdraw = amountNeeded - amountWithdrawn;
+            if (amountToWithdraw > params.totalDebt) {
+                amountToWithdraw = params.totalDebt;
+            }
+            
+            uint256 withdrawn = IBaseStrategy(strategy).withdraw(amountToWithdraw);
+            
+            params.totalDebt -= withdrawn;
+            totalStrategyDebt -= withdrawn;
+            amountWithdrawn += withdrawn;
+        }
+        
+        return amountWithdrawn;
+    }
+
     /* ========== ADMIN FUNCTIONS ========== */
 
     /**
