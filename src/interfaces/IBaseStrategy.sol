@@ -65,7 +65,7 @@ interface IBaseStrategy {
      * @dev Returns the estimated APR based on current market conditions
      * @return apr Estimated APR in basis points (e.g., 500 = 5%)
      */
-    function estimateAPR() external view returns (uint256);
+    function estimateApr() external view returns (uint256);
 
     // ============ State-Changing Functions ============
 
