@@ -113,19 +113,33 @@ contract NectarVault is ERC4626, Ownable, ReentrancyGuard, INectarVault {
      * @param strategy Strategy contract address
      * @param debtRatio Percentage of funds to allocate (in basis points, max 10000)
      */
-    function addStrategy(address strategy, uint256 debtRatio) external override onlyOwner {
-        require(strategy != address(0), "NectarVault: strategy is zero address");
-        require(debtRatio <= MAX_BPS, "NectarVault: debtRatio exceeds max");
-        require(totalDebtRatio + debtRatio <= MAX_BPS, "NectarVault: total debt ratio exceeds max");
+    function addStrategy(address strategy, uint256 debtRatio) 
+        external 
+        override 
+        onlyOwner 
+    {
+        require(strategy != address(0), "NectarVault: zero address");
+        require(debtRatio <= MAX_BPS, "NectarVault: debtRatio too high");
+        require(totalDebtRatio + debtRatio <= MAX_BPS, "NectarVault: total debtRatio exceeded");
         require(!strategies[strategy].active, "NectarVault: strategy already active");
-
-        // TODO: Implement in next iteration
-        // - Verify strategy implements IBaseStrategy
-        // - Verify strategy.want() matches vault asset
-        // - Add strategy to strategyList
-        // - Set strategy parameters
-        // - Update totalDebtRatio
-        // - Emit StrategyAdded event
+        
+        // Verify strategy has correct want token
+        require(IBaseStrategy(strategy).want() == asset(), "NectarVault: wrong want token");
+        
+        // Verify this vault owns the strategy
+        require(IBaseStrategy(strategy).vault() == address(this), "NectarVault: wrong vault");
+        
+        strategies[strategy] = StrategyParams({
+            debtRatio: debtRatio,
+            totalDebt: 0,
+            lastReport: block.timestamp,
+            active: true
+        });
+        
+        strategyList.push(strategy);
+        totalDebtRatio += debtRatio;
+        
+        emit StrategyAdded(strategy, debtRatio);
     }
 
     /**
@@ -133,16 +147,39 @@ contract NectarVault is ERC4626, Ownable, ReentrancyGuard, INectarVault {
      * @dev Only owner can remove strategies. Withdraws all capital before removal
      * @param strategy Strategy contract address
      */
-    function removeStrategy(address strategy) external override onlyOwner {
+    function removeStrategy(address strategy) 
+        external 
+        override 
+        onlyOwner 
+    {
         require(strategies[strategy].active, "NectarVault: strategy not active");
-
-        // TODO: Implement in next iteration
-        // - Withdraw all funds from strategy
-        // - Update totalDebtRatio
-        // - Update totalStrategyDebt
-        // - Mark strategy as inactive
-        // - Remove from strategyList
-        // - Emit StrategyRemoved event
+        
+        StrategyParams storage params = strategies[strategy];
+        
+        // Withdraw all funds from strategy
+        if (params.totalDebt > 0) {
+            uint256 withdrawn = IBaseStrategy(strategy).withdraw(params.totalDebt);
+            totalStrategyDebt -= params.totalDebt;
+            params.totalDebt = 0;
+        }
+        
+        // Update total debt ratio
+        totalDebtRatio -= params.debtRatio;
+        
+        // Mark as inactive
+        params.active = false;
+        params.debtRatio = 0;
+        
+        // Remove from strategy list
+        for (uint256 i = 0; i < strategyList.length; i++) {
+            if (strategyList[i] == strategy) {
+                strategyList[i] = strategyList[strategyList.length - 1];
+                strategyList.pop();
+                break;
+            }
+        }
+        
+        emit StrategyRemoved(strategy);
     }
 
     /**
