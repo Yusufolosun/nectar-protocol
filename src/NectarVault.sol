@@ -188,16 +188,24 @@ contract NectarVault is ERC4626, Ownable, ReentrancyGuard, INectarVault {
      * @param strategy Strategy contract address
      * @param debtRatio New debt ratio in basis points
      */
-    function updateStrategyDebtRatio(address strategy, uint256 debtRatio) external override onlyOwner {
+    function updateStrategyDebtRatio(address strategy, uint256 debtRatio)
+        external
+        override
+        onlyOwner
+    {
         require(strategies[strategy].active, "NectarVault: strategy not active");
-        require(debtRatio <= MAX_BPS, "NectarVault: debtRatio exceeds max");
-
-        // TODO: Implement in next iteration
-        // - Calculate new total debt ratio
-        // - Ensure total doesn't exceed MAX_BPS
-        // - Update strategy debt ratio
-        // - Rebalance capital if necessary
-        // - Emit StrategyDebtRatioUpdated event
+        require(debtRatio <= MAX_BPS, "NectarVault: debtRatio too high");
+        
+        StrategyParams storage params = strategies[strategy];
+        uint256 oldDebtRatio = params.debtRatio;
+        
+        // Update total debt ratio
+        totalDebtRatio = totalDebtRatio - oldDebtRatio + debtRatio;
+        require(totalDebtRatio <= MAX_BPS, "NectarVault: total debtRatio exceeded");
+        
+        params.debtRatio = debtRatio;
+        
+        emit StrategyDebtRatioUpdated(strategy, debtRatio);
     }
 
     /**
@@ -205,17 +213,49 @@ contract NectarVault is ERC4626, Ownable, ReentrancyGuard, INectarVault {
      * @dev Can be called by anyone to harvest strategy rewards
      * @param strategy Strategy contract address
      */
-    function harvest(address strategy) external override {
+    function harvest(address strategy) 
+        external 
+        override 
+    {
         require(strategies[strategy].active, "NectarVault: strategy not active");
-
-        // TODO: Implement in next iteration
-        // - Call strategy.harvest()
-        // - Calculate profit/loss
-        // - Deduct performance fee from profit
-        // - Update strategy.totalDebt
-        // - Update totalStrategyDebt
-        // - Update strategy.lastReport
-        // - Emit Harvested event
+        
+        StrategyParams storage params = strategies[strategy];
+        uint256 oldDebt = params.totalDebt;
+        
+        // Trigger strategy harvest
+        uint256 profit = IBaseStrategy(strategy).harvest();
+        
+        // Get current balance in strategy
+        uint256 currentBalance = IBaseStrategy(strategy).balanceOf();
+        
+        uint256 newDebt = currentBalance;
+        uint256 totalProfit = 0;
+        uint256 totalLoss = 0;
+        
+        if (newDebt > oldDebt) {
+            totalProfit = newDebt - oldDebt;
+            
+            // Calculate and collect performance fee
+            if (performanceFee > 0 && totalProfit > 0) {
+                uint256 feeAmount = (totalProfit * performanceFee) / MAX_BPS;
+                
+                // Withdraw fee from strategy
+                if (feeAmount > 0) {
+                    IBaseStrategy(strategy).withdraw(feeAmount);
+                    IERC20(asset()).safeTransfer(feeRecipient, feeAmount);
+                    newDebt -= feeAmount;
+                }
+            }
+        } else if (newDebt < oldDebt) {
+            totalLoss = oldDebt - newDebt;
+        }
+        
+        // Update debt tracking
+        totalStrategyDebt = totalStrategyDebt - oldDebt + newDebt;
+        params.totalDebt = newDebt;
+        params.lastReport = block.timestamp;
+        
+        emit Harvested(strategy, totalProfit, totalLoss);
     }
 
     /* ========== ADMIN FUNCTIONS ========== */
