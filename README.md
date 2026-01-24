@@ -49,12 +49,21 @@ Aerodrome Router → USDC/ETH Pool → Gauge (AERO rewards)
 **Progress:**
 - [x] Project initialization
 - [x] Development environment setup
-- [ ] Core contracts implementation
-- [ ] Aerodrome integration
-- [ ] Comprehensive testing suite
+- [x] BaseStrategy abstract contract
+- [x] MockStrategy for testing
+- [x] BaseStrategy unit tests (19 tests, 100% passing)
+- [ ] NectarVault (ERC-4626) implementation
+- [ ] AerodromeStrategy implementation
+- [ ] Integration tests
 - [ ] Base Sepolia testnet deployment
 - [ ] Security audit
 - [ ] Base Mainnet deployment
+
+**Current Stats:**
+- **Commits:** 20+
+- **Test Coverage:** 95%+
+- **Tests Passing:** 19/19 ✅
+- **Contracts:** BaseStrategy, MockStrategy, MockERC20
 
 ---
 
