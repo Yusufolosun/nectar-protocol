@@ -23,6 +23,18 @@ abstract contract BaseStrategy is Ownable, ReentrancyGuard, IBaseStrategy {
     /// @notice Address of the underlying asset token (e.g., USDC)
     address public immutable WANT;
 
+    /// @notice Returns the vault address
+    /// @return Address of the vault that owns this strategy
+    function vault() external view override returns (address) {
+        return VAULT;
+    }
+
+    /// @notice Returns the want token address
+    /// @return Address of the underlying asset token
+    function want() external view override returns (address) {
+        return WANT;
+    }
+
     /// @notice Address authorized to call harvest and manage strategy
     address public strategist;
 
