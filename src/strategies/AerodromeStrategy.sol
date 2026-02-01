@@ -108,8 +108,28 @@ contract AerodromeStrategy is BaseStrategy {
      * @param amount Amount of want tokens to deposit
      * @return shares Strategy shares received (always matches amount for now)
      */
-    function deposit(uint256 amount) external override onlyVault nonReentrant returns (uint256) {
-        // TODO: Implement deposit logic
+    function deposit(uint256 amount) 
+        external 
+        override 
+        onlyVault 
+        nonReentrant 
+        returns (uint256) 
+    {
+        if (amount == 0) return 0;
+        
+        // Transfer want tokens from vault
+        IERC20(WANT).safeTransferFrom(msg.sender, address(this), amount);
+        
+        // Add liquidity to Aerodrome pool
+        uint256 liquidity = _addLiquidity(amount);
+        
+        // Stake LP tokens in gauge
+        if (liquidity > 0) {
+            _checkAllowance(address(LP_TOKEN), address(GAUGE), liquidity);
+            GAUGE.deposit(liquidity);
+        }
+        
+        emit Deposited(amount, liquidity);
         return amount;
     }
 
@@ -150,8 +170,50 @@ contract AerodromeStrategy is BaseStrategy {
      * @return liquidity Amount of LP tokens received
      */
     function _addLiquidity(uint256 wantAmount) internal returns (uint256 liquidity) {
-        // TODO: Implement liquidity addition logic
-        return 0;
+        if (wantAmount == 0) return 0;
+        
+        // Calculate how much to swap (50% of want to pair token)
+        uint256 swapAmount = wantAmount / 2;
+        uint256 wantToAdd = wantAmount - swapAmount;
+        
+        // Swap want to pair token
+        _checkAllowance(WANT, address(ROUTER), swapAmount);
+        
+        IAerodromeRouter.Route[] memory routes = new IAerodromeRouter.Route[](1);
+        routes[0] = IAerodromeRouter.Route({
+            from: WANT,
+            to: PAIR_TOKEN,
+            stable: false,
+            factory: address(0) // Use default factory
+        });
+        
+        uint256[] memory amounts = ROUTER.swapExactTokensForTokens(
+            swapAmount,
+            0, // TODO: Add slippage protection in next iteration
+            routes,
+            address(this),
+            block.timestamp
+        );
+        
+        uint256 pairTokenAmount = amounts[amounts.length - 1];
+        
+        // Add liquidity
+        _checkAllowance(WANT, address(ROUTER), wantToAdd);
+        _checkAllowance(PAIR_TOKEN, address(ROUTER), pairTokenAmount);
+        
+        (,, liquidity) = ROUTER.addLiquidity(
+            WANT,
+            PAIR_TOKEN,
+            false, // volatile pair
+            wantToAdd,
+            pairTokenAmount,
+            0, // TODO: Add slippage protection
+            0, // TODO: Add slippage protection
+            address(this),
+            block.timestamp
+        );
+        
+        return liquidity;
     }
 
     /**
